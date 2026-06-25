@@ -2,18 +2,19 @@
 #define PAYLOAD_STRUCT_H
 
 #include <stdint.h>
-
+// Packet types and status codes for handheld and base station communication
 enum PacketType : uint8_t {
     PKT_STATUS   = 0x01,   // handheld → base
     PKT_RESPONSE = 0x02    // base → handheld
 };
-
+// Status codes for handheld status
 enum StatusCode : uint8_t {
     STATUS_RED = 1,
     STATUS_GREEN = 2,
     STATUS_BLUE = 3
 };
 
+// Payload structure for communication between handheld and base station
 struct __attribute__((packed)) payload_t {
     uint16_t year;        // e.g., 2025
     uint8_t  month;       // 1-12
