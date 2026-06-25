@@ -24,7 +24,6 @@ constexpr uint8_t SERIAL2_TX = 17;
 
 String serialBufferIn = "";
 
-
 // buzzer beep helper function
 void beepBUZZER(uint8_t pin, uint8_t times = 1, uint16_t delayMS = 100){
   for(uint8_t i = 0; i < times; i++){
@@ -35,12 +34,14 @@ void beepBUZZER(uint8_t pin, uint8_t times = 1, uint16_t delayMS = 100){
   }
 }
 
+// RGB helper function
 void setRGB(uint8_t r, uint8_t g, uint8_t b){
   digitalWrite(LED_R, r);
   digitalWrite(LED_G, g);
   digitalWrite(LED_B, b);
 }
 
+// an array to hold the RGB values for each status code
 const uint8_t statusColors[4][3] = {
   {0, 0, 0}, // Status 0: OFF
   {1, 0, 0}, // Status 1: RED
@@ -48,6 +49,7 @@ const uint8_t statusColors[4][3] = {
   {0, 1, 0}  // Status 3: GREEN
 };
 
+// convert packet type to string
 const char* typeToStr(uint8_t type) {
     switch (type) {
         case 1: return "PKT_STATUS";
@@ -56,6 +58,7 @@ const char* typeToStr(uint8_t type) {
     }
 }
 
+// convert status code to string
 const char* statusToStr(uint8_t status) {
     switch (status) {
         case 1: return "ALERT";
@@ -65,12 +68,15 @@ const char* statusToStr(uint8_t status) {
     }
 }
 
+// days in each month
 const uint8_t daysInMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
+// check if a year is a leap year
 bool isLeapYear(uint16_t y) {
     return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
 }
 
+// UTC+8 time offset helper function
 void applyTimeOffset(uint8_t &hour, uint8_t &day, uint8_t &month, uint16_t &year, uint8_t offset) {
     hour += offset;
     while(hour >= 24){
@@ -91,7 +97,7 @@ void applyTimeOffset(uint8_t &hour, uint8_t &day, uint8_t &month, uint16_t &year
     }
 }
 
-
+// handle incoming packets from handheld
 void handleIncomingPackets(){
 
   uint8_t pipeNum;
@@ -141,6 +147,7 @@ void handleIncomingPackets(){
   uint8_t hour12 = hour % 12;
   if (hour12 == 0) hour12 = 12;
 
+  // created a buffer to hold the timestamp in the format MM/DD/YYYY-HH:MM:SSAM/PM
   char timeStamp[32]; 
   snprintf(timeStamp, sizeof(timeStamp), "%02u/%02u/%04u-%02u:%02u:%02u%s",  
          month,
@@ -149,6 +156,7 @@ void handleIncomingPackets(){
          hour12, minute, seconds,
          ampm);
 
+  // create a buffer to hold the serial output in the format <STATUS,timestamp,type,handheld_id,tower,lat,lon,status,status_str,msg_id,response_code,response_bool>
   char serialBuffer[256];
   snprintf(serialBuffer, sizeof(serialBuffer), 
          "<STATUS,%s,%u,%s,%u,%u,%.7f,%.7f,%u,%s,%u,%u,%d>\n",
@@ -166,9 +174,9 @@ void handleIncomingPackets(){
          0 // response bool
         );
   Serial2.print(serialBuffer);
-  //Serial.print(serialBuffer);
 }
 
+// read serial commands from the dashboard and send response packets to the handheld
 void handleSerialCommands(){
 
   while(Serial2.available()){
@@ -183,7 +191,9 @@ void handleSerialCommands(){
     }
   }    
 }
-  
+
+// process the serial packet received from the dashboard 
+// parse the packet and send a response packet to the handheld
 void processSerialPacket(String line) {
 
   line.trim();
@@ -219,6 +229,7 @@ void processSerialPacket(String line) {
   sendRFResponse(handheld_id, msg_id, response_code);
 }
 
+// send a response packet to the handheld
 void sendRFResponse(int handheld_id, int msg_id, int response_code) {
 
   payload_t pkt = {0};
@@ -240,6 +251,7 @@ void sendRFResponse(int handheld_id, int msg_id, int response_code) {
   }
 }
 
+// initialize the hardware e.g. serial, radio, buzzer, RGB
 bool initHardware() {
   while (true) {
     if (!Serial2) {

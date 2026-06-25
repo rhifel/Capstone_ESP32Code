@@ -440,6 +440,8 @@ void handleScreenButton(uint32_t now) {
 }
 
 // Check for incoming response from base
+// check if the response is valid and matches the last sent message ID
+// if so, update the lastRecv variables
 void checkForResponse(){
     uint8_t pipe;
     if(radio.available(&pipe) && pipe == 1){
@@ -503,6 +505,9 @@ void drawResponsePopup(uint16_t id) {
     oled.display();
 }
 
+// send SOS packet to base
+// returns true if sent successfully, false if failed (e.g. GPS not valid)
+// also updates the last sent time snapshot and status
 bool sendSOS(uint8_t status){
     if(!gps.location.isValid() || !gps.time.isValid() || !gps.date.isValid()){
         return false;
@@ -550,6 +555,10 @@ bool sendSOS(uint8_t status){
     return true;
 }
 
+// this function handles the status buttons and implements the confirmation mechanism
+// it also checks for the confirmation timeout and resets the state if necessary
+// it also checks for the lock timeout and prevents sending if the current status is higher priority than the pending status
+// it also shows the appropriate messages on the OLED display based on the button presses and confirmation state
 void handleStatusButtons(uint32_t now) {
     for (size_t i = 0; i < numButtons; i++) {
         uint8_t currentButtonState = digitalRead(buttons[i]);
