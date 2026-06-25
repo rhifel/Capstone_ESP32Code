@@ -71,7 +71,7 @@ uint8_t lastRecvHour, lastRecvMinute, lastRecvSecond;
 uint8_t lastRecvDay, lastRecvMonth;
 uint16_t lastRecvYear;
 
-// popup handling
+// popup handling when receiving response
 bool showRecvPopup = false;
 uint32_t recvPopupStart = 0;
 const uint32_t POPUP_MS = 3000;
@@ -88,6 +88,69 @@ uint8_t currentStatus = 0;
 unsigned long sendTime = 0;
 const unsigned long LOCK_TIMEOUT = 10000; // 10 secs
 
+// TDC update
+uint32_t lastTDCUpdate = 0;
+const uint16_t TDC_REFRESH_MS = 1000; // 1 sec
+// tempscreen; for internal UI
+bool tempScreenActive = false;
+uint32_t tempScreenStart = 0;
+uint16_t tempScreenDuration = 0;
+
+// non blocking for LED and buzzer 
+struct BlinkState {
+    bool active = false;
+    uint8_t pin;
+    uint8_t togglesLeft;
+    uint32_t lastTime;
+    uint16_t interval;
+    bool state;
+} blink;
+uint8_t ledMode = 0;
+
+void startBlink(uint8_t pin, uint8_t times, uint16_t interval){
+    pinMode(pin, OUTPUT);
+
+    blink.active = true;
+    blink.pin = pin;
+    blink.togglesLeft = times * 2;
+    blink.interval = interval;
+    blink.lastTime = millis();
+    blink.state = false;
+}
+
+void updateBlink(){
+    if(!blink.active) return;
+
+    uint32_t now = millis();
+    if(now - blink.lastTime >= blink.interval){
+        blink.lastTime = now;
+
+        blink.state = !blink.state;
+        digitalWrite(blink.pin, blink.state);
+
+        blink.togglesLeft--;
+
+        if(blink.togglesLeft == 0){
+            blink.active = false;
+            digitalWrite(blink.pin, LOW);
+        }
+    }
+}
+
+void setLEDMode(uint8_t mode) {
+    blink.active = false;
+    digitalWrite(LED_G, LOW);
+
+    ledMode = mode;
+
+    switch (mode) {
+        case 0: break;
+        case 1: startBlink(LED_G, 999, 500); break;
+        case 2: startBlink(LED_G, 1, 400); break;
+        case 3: startBlink(LED_G, 999, 200); break;
+    }
+}
+
 // priority function 
 bool isHigherPriority(uint8_t newStatus, uint8_t currentStatus){
     if(currentStatus == 0) return true;
@@ -95,29 +158,46 @@ bool isHigherPriority(uint8_t newStatus, uint8_t currentStatus){
 }
 
 // OLED helper functions
-void oledPrintAt(const String &msg, int x, int y, int textSize = 1, bool clear = false){
+void oledPrintAt(const char* msg, int x, int y, int textSize = 1, bool clear = false){
     if(clear) oled.clearDisplay();
     oled.setTextSize(textSize);
     oled.setCursor(x, y);
-    oled.println(msg);
+    oled.print(msg);
 }
 
-void oledPrintCenter(const String &msg, int textSize = 1, bool clear = false){
+void oledPrintCenter(const char* msg, int textSize = 1, bool clear = false){
     int cX = SCREEN_WIDTH / 2;
     int cY = SCREEN_HEIGHT / 2;
-    int textWidth  = msg.length() * 6 * textSize;
+
+    int textWidth  = strlen(msg) * 6 * textSize;
     int textHeight = 8 * textSize;
-    int posX = cX - textWidth/2;
-    int posY = cY - textHeight/2;
+
+    int posX = cX - textWidth / 2;
+    int posY = cY - textHeight / 2;
+
     oledPrintAt(msg, posX, posY, textSize, clear);
 }
 
-void oledPrintCenterY(const String &msg, int y, int textSize =1){
-    int textWidth = msg.length() * 6  * textSize;
-    int x = (128 - textWidth) / 2;
+void oledPrintCenterY(const char* msg, int y, int textSize = 1){
+    int textWidth = strlen(msg) * 6 * textSize;
+    int x = (SCREEN_WIDTH - textWidth) / 2;
+
     oled.setTextSize(textSize);
     oled.setCursor(x, y);
     oled.print(msg);
+}
+// function for the internal UI; non-blocking
+void showTempMessage(const char* line1, const char* line2, uint16_t duration){
+    if(duration == 0) duration = 1000;
+
+    oled.clearDisplay();
+    oledPrintCenterY(line1, 20, 2);
+    if(line2) oledPrintCenterY(line2, 40, 1);
+    oled.display();
+
+    tempScreenActive = true;
+    tempScreenStart = millis();
+    tempScreenDuration = duration;
 }
 
 const char* statusToStr(uint8_t s) {
@@ -142,10 +222,12 @@ const char* statusToMsgResp(uint8_t r){
 // enums for statemachine homescreen
 // TDC is Time, Date, and Coordinates
 // LS and LR are Last Sent and Received
-enum HomeScreenState { // being replace SCREEN_LSR 
+// GD is GUIDE for ALERT | AID | SAFE
+enum HomeScreenState { 
     SCREEN_TDC, 
     SCREEN_LR, 
-    SCREEN_LS}; 
+    SCREEN_LS,
+    SCREEN_GD}; 
 HomeScreenState homeState = SCREEN_TDC; 
 
 const uint8_t daysInMonth[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
@@ -174,6 +256,7 @@ void applyTimeOffset(uint8_t &hour, uint8_t &day, uint8_t &month, uint16_t &year
     }
 }
 
+// 1st screen
 void oledShowTDC() {
     oled.clearDisplay();
 
@@ -198,13 +281,13 @@ void oledShowTDC() {
     if (hour12 == 0) hour12 = 12;
 
     char timeBuf[16];
-    sprintf(timeBuf, "%02d:%02d %s", hour12, minute, ampm);
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d %s", hour12, minute, ampm);
 
     char dateBuf[16];
-    sprintf(dateBuf, "%02d/%02d/%04d", month, day, year);
+    snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d/%04d", month, day, year);
 
     char coordBuf[24];
-    sprintf(coordBuf, "%.5f, %.5f", gps.location.lat(), gps.location.lng());
+    snprintf(coordBuf, sizeof(coordBuf), "%.5f, %.5f", gps.location.lat(), gps.location.lng());
 
     oledPrintCenterY(dateBuf, 4, 1);
     oledPrintCenterY(timeBuf, 16, 2);
@@ -214,14 +297,14 @@ void oledShowTDC() {
     oled.display();
 }
 
-//  SECTION 1: LAST SENT 
+// 2nd
 void oledShowLS() {
     oled.clearDisplay();
     char timeBuf[16];
     char idBuf[8];
     char dateBuf[16];
     
-    oledPrintAt("LAST SENT:", 0, 0, 1);
+    oledPrintAt("SENT:", 0, 0, 1);
 
     if (sentPkt && lastSentTimeValid) {
         uint8_t hour   = lastSentHour;
@@ -237,8 +320,8 @@ void oledShowLS() {
         uint8_t hour12 = hour % 12;
         if (hour12 == 0) hour12 = 12;
 
-        sprintf(timeBuf, "%02d:%02d:%02d%s", hour12, minute, second, ampm);
-        sprintf(dateBuf, "%02d/%02d/%04d", month, day, year);
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d%s", hour12, minute, second, ampm);
+        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d/%04d", month, day, year);
 
         int timeWidth = strlen(timeBuf) * 6;
         int dateWidth = strlen(dateBuf) * 6;
@@ -252,7 +335,7 @@ void oledShowLS() {
         oledPrintCenterY(statusToStr(lastSentStatus), 30, 2);
 
         // id label and value
-        sprintf(idBuf, "ID:%d", lastSentMsgID);
+        snprintf(idBuf, sizeof(idBuf), "ID:%d", lastSentMsgID);
         oledPrintCenterY(idBuf, 50, 1);
     } else {
         oled.clearDisplay();
@@ -263,14 +346,14 @@ void oledShowLS() {
     oled.display();
 }
 
-//  SECTION 2: LAST RECV 
+//  3rd
 void oledShowLR() {
     oled.clearDisplay();
     char timeBuf[16];
     char idBuf[8];
     char dateBuf[16];
 
-    oledPrintAt("LAST RECV:", 0, 0, 1);
+    oledPrintAt("RECEIVED:", 0, 0, 1);
 
     if (recvResponse && lastRecvTimeValid) {
         uint8_t hour   = lastRecvHour;
@@ -286,8 +369,8 @@ void oledShowLR() {
         uint8_t hour12 = hour % 12;
         if (hour12 == 0) hour12 = 12;
 
-        sprintf(timeBuf, "%02d:%02d:%02d%s", hour12, minute, second, ampm);
-        sprintf(dateBuf, "%02d/%02d/%04d", month, day, year);
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d%s", hour12, minute, second, ampm);
+        snprintf(dateBuf, sizeof(dateBuf), "%02d/%02d/%04d", month, day, year);
 
         int timeWidth = strlen(timeBuf) * 6;
         int dateWidth = strlen(dateBuf) * 6;
@@ -301,7 +384,7 @@ void oledShowLR() {
         oledPrintCenterY(statusToMsgResp(lastRecvResponse), 25, 2);
 
         // id
-        sprintf(idBuf, "ID:%d", lastRecvMsgID);
+        snprintf(idBuf, sizeof(idBuf), "ID:%d", lastRecvMsgID);
         oledPrintCenterY(idBuf, 50, 1);
     } else {
         oled.clearDisplay();
@@ -312,12 +395,34 @@ void oledShowLR() {
     oled.display();
 }
 
+// 4th
+void oledShowGD(){
+    oled.clearDisplay();
 
+    oledPrintCenterY("GUIDE", 0, 1);
+
+    oledPrintAt("ALERT", 5, 18, 1);
+    oledPrintAt("AID",   5, 32, 1);
+    oledPrintAt("SAFE",  5, 46, 1);
+
+    oledPrintAt("- EMERGENCY", 55, 18, 1);
+    oledPrintAt("- ASSIST",    55, 32, 1);
+    oledPrintAt("- CLEAR",     55, 46, 1);
+
+    oled.display();
+}
 // helper for switching screens
 void refreshCurrentScreen() {
-    if (homeState == SCREEN_TDC) oledShowTDC();
-    else if (homeState == SCREEN_LS) oledShowLS();
-    else if (homeState == SCREEN_LR) oledShowLR();
+    switch (homeState) {
+        case SCREEN_TDC:
+            oledShowTDC();  break;
+        case SCREEN_LS:
+            oledShowLS();   break;
+        case SCREEN_LR:
+            oledShowLR();   break;
+        case SCREEN_GD:
+            oledShowGD();   break;
+    }
 }
 
 void handleScreenButton(uint32_t now) {
@@ -327,21 +432,11 @@ void handleScreenButton(uint32_t now) {
 
         lastScreenPressTime = now;
 
-        homeState = (HomeScreenState)((homeState + 1) % 3);
+        homeState = (HomeScreenState)((homeState + 1) % 4);
         refreshCurrentScreen();
     }
     
     lastScButtonState = currentButtonState;
-}
-
- 
-void blinkLED(uint8_t pin, uint8_t times = 1, uint16_t delayMs = 100){
-    for(uint8_t i = 0; i < times; i++){
-        digitalWrite(pin, HIGH);
-        delay(delayMs);
-        digitalWrite(pin, LOW);
-        delay(delayMs);
-    }
 }
 
 // Check for incoming response from base
@@ -352,6 +447,8 @@ void checkForResponse(){
         // trash invalic packet size
         if(payloadSize != sizeof(payload_t)){
             radio.flush_rx();
+            radio.stopListening();
+            radio.startListening();
             return;
         }
 
@@ -361,7 +458,10 @@ void checkForResponse(){
         // Validate packet
         if (resp.type != PKT_RESPONSE) return;
         if (resp.handheld_id != H_ID) return;
-        // if (resp.msg_id != lastSentMsgID) return;
+        if (resp.msg_id != lastSentMsgID) return;
+
+        lastRecvMsgID = resp.msg_id;
+        lastRecvResponse = resp.response_code;  
         
         // receivedTime snapshot
         if(gps.time.isValid() && gps.date.isValid()){
@@ -379,16 +479,12 @@ void checkForResponse(){
         }
 
         recvResponse = true;
-        lastRecvMsgID = resp.msg_id;
-        lastRecvResponse = resp.response_code;  
-
         waitingForResponse = false;
 
+        setLEDMode(2);
         showRecvPopup = true;
         recvPopupStart = millis();
-        
-        blinkLED(LED_G, 1, 1000);
-        drawResponsePopup(resp.msg_id);
+        tempScreenActive = false;
     }
 }
 
@@ -401,7 +497,7 @@ void drawResponsePopup(uint16_t id) {
     oledPrintCenterY("NEW", 10, 2);
     oledPrintCenterY("MESSAGE", 30, 2);
 
-    sprintf(idBuf, "ID:%d", id);
+    snprintf(idBuf, sizeof(idBuf), "ID:%d", id);
     oledPrintCenterY(idBuf, 50, 1);
 
     oled.display();
@@ -449,10 +545,8 @@ bool sendSOS(uint8_t status){
     lastSentTimeValid = (pkt.year != 0);
 
     if(ack){
-        blinkLED(LED_G, 1, 1000);
-    } // blink if there is autoack 
-      // no blink if autoack failed but the message could still be sent 
-      
+        setLEDMode(2);  // blink if there is autoack 
+    } 
     return true;
 }
 
@@ -464,10 +558,10 @@ void handleStatusButtons(uint32_t now) {
             lastPressTime[i] = now;
 
             // the 2nd press 
-            if(isWaitingConfirm){
+            if(isWaitingConfirm && pendingStatus != 0){
                 if(statuses[i] == pendingStatus){ 
                     // match, turn off LED, send packet
-                    digitalWrite(LED_G, LOW);
+                    setLEDMode(0);
                     //sendSOS(pendingStatus);
                     if(waitingForResponse){
                         if(!isHigherPriority(pendingStatus, currentStatus)){
@@ -475,17 +569,12 @@ void handleStatusButtons(uint32_t now) {
                             if(remaining < 0) remaining = 0;
                             char retryBuf[20];
 
-                            oled.clearDisplay();
-                            oledPrintCenter("PLEASE WAIT", 1, true);
-                            snprintf(retryBuf, sizeof(retryBuf), "RETRY IN %d", remaining);
-                            oledPrintCenterY(retryBuf, 40, 1);
-                            oled.display();
-                            delay(800);
-                            refreshCurrentScreen();
+                            snprintf(retryBuf, sizeof(retryBuf), "%ds", remaining);
+                            showTempMessage("RETRY IN", retryBuf, 800);
+
                             isWaitingConfirm = false;
                             return;
                         }
-
                     }
                     
                     bool success = sendSOS(pendingStatus);
@@ -495,33 +584,24 @@ void handleStatusButtons(uint32_t now) {
                         waitingForResponse = true;
                         currentStatus = pendingStatus;
                         sendTime = now;
-                        showRecvPopup = true; // trigger the Popup state to freeze this screen for 3 seconds
-                        recvPopupStart = now;
+                        setLEDMode(0);
 
-                        oled.clearDisplay();
-                        oledPrintCenterY("SENDING...", 10, 1);
-                        oledPrintCenterY(statusToStr(pendingStatus), 30, 2);
-                        oled.display(); 
+                        showTempMessage("SENDING...", statusToStr(pendingStatus), 1000);
                     }else{
-                        oled.clearDisplay();
-                        oledPrintCenter("SEND FAILED", 1, true);
-                        oled.display();
-                        delay(800);
-                        refreshCurrentScreen();
+                        setLEDMode(0);
+                        showTempMessage("FAILED", "TO SEND", 800);
                     }
 
                 } else{ // user presses a different button
                     isWaitingConfirm = false;
-                    oled.clearDisplay();
-                    oledPrintCenter("CANCELLED", 1, true);
-                    oled.display(); 
-                    delay(800); //small delay to show msg
-                    refreshCurrentScreen();
+                    setLEDMode(0);
+                    showTempMessage("CANCELLED", nullptr, 800);
                 }
             }else{ // first press
                 isWaitingConfirm = true;
                 pendingStatus = statuses[i];
                 confirmTimeout = now;
+                setLEDMode(3); // confirm warning
 
                 oled.clearDisplay();
                 oledPrintCenterY("CONFIRM SEND?", 5, 1);
@@ -537,10 +617,11 @@ void handleStatusButtons(uint32_t now) {
         isWaitingConfirm = false;
         pendingStatus = 0;
         confirmTimeout = 0;
-        digitalWrite(LED_G, LOW);
+        setLEDMode(0);
         refreshCurrentScreen();
     }
 }
+
 
 // setup
 void setup() {
@@ -548,6 +629,7 @@ void setup() {
     Wire.begin();
     GPSSerial.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
     oled.begin(OLED_ADDR,true);
+
 
     //Wire.setClock(400000);
     oled.clearDisplay();
@@ -576,11 +658,15 @@ void setup() {
         delay(700);
     }
 
-    // LED flash to indicate active
-    blinkLED(LED_G, 4, 200);
+    setLEDMode(2); // startup blink
+
+    for (size_t i = 0; i < numButtons; i++){
+        lastStButtonState[i] = digitalRead(buttons[i]);
+        }
+
+    lastScButtonState = digitalRead(BUTTON_SC);
 
     radio.enableDynamicPayloads();
-    radio.disableAckPayload();
     radio.setChannel(82);
     radio.setDataRate(RF24_250KBPS);
     radio.setPALevel(RF24_PA_MAX);
@@ -603,43 +689,58 @@ void setup() {
 
 // Main Loop 
 void loop() {
-    while(GPSSerial.available()) gps.encode(GPSSerial.read());
-
     uint32_t now = millis();
 
-    // check responses from base
-    checkForResponse();
+    // always running 
+    while(GPSSerial.available()) gps.encode(GPSSerial.read());
+    
+    checkForResponse(); // check responses from base
+    updateBlink(); // non-blocking LED&Buzzer 
+
+    // state lock
     if(waitingForResponse && (now - sendTime > LOCK_TIMEOUT)){
         waitingForResponse = false;
     }
-    // check for button presses
-    handleScreenButton(now); // screen rotation button
-    handleStatusButtons(now);
+
+    if(tempScreenActive){
+        if(millis() - tempScreenStart > tempScreenDuration){
+            tempScreenActive = false;
+            refreshCurrentScreen();
+        }
+        return;
+    }
 
     // popup transitions when receiving
-    if(showRecvPopup){
-        // If 3 seconds have passed, 
-        // close the popup and return to main screen
-        if (now - recvPopupStart > POPUP_MS){ 
-            showRecvPopup = false;
-            refreshCurrentScreen();
+    if (showRecvPopup) {
+        static bool drawn = false;
+
+        if (!drawn) {
+            drawResponsePopup(lastRecvMsgID);
+            drawn = true;
+        }
+
+        if (now - recvPopupStart > POPUP_MS) {  // If 3 seconds have passed, 
+            showRecvPopup = false;              // close the popup and return to main screen
+            drawn = false;
+            refreshCurrentScreen();                                    
+        }
+        return;
+    }
+
+    // check for button presses
+    handleScreenButton(now); 
+    handleStatusButtons(now);
+
+    if(homeState == SCREEN_TDC && !tempScreenActive && !showRecvPopup){
+        if(now - lastTDCUpdate > TDC_REFRESH_MS){
+            lastTDCUpdate = now;
+            oledShowTDC();
         }
     }
 
-    else if(isWaitingConfirm){
-        // LED ON for 100ms, OFF for 400ms 
-        if (now % 500 < 100) { 
-        digitalWrite(LED_G, HIGH);
-        } else{
-        digitalWrite(LED_G, LOW);
-        }
-    }
-
-    else{
-        static uint32_t lastRefresh = 0;
-        if(now - lastRefresh > 200){
-            lastRefresh = now;
-            refreshCurrentScreen();
-        }
+    static HomeScreenState lastState = SCREEN_TDC;
+    if(homeState != lastState){
+        lastState = homeState;
+        refreshCurrentScreen();
     }
 }

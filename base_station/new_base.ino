@@ -115,19 +115,12 @@ void handleIncomingPackets(){
 
   if(pkt.type != PKT_STATUS) return;
 
+  unsigned long startTime = millis();
+  
   uint8_t s = (pkt.status <= 3) ? pkt.status : 0;
 
   setRGB(statusColors[s][0], statusColors[s][1], statusColors[s][2]);
-  beepBUZZER(BUZZ, 2, 200);
-
-/*
-  switch(pkt.status) {
-    case STATUS_RED:   setRGB(1, 0, 0); break;
-    case STATUS_GREEN: setRGB(0, 1, 0); break;
-    case STATUS_BLUE:  setRGB(0, 0, 1); break;
-    default:           setRGB(0, 0, 0); break; // off
-  }
-*/  
+  beepBUZZER(BUZZ, 1, 400);
 
   float lat = pkt.latitude / 1e7;
   float lon = pkt.longitude / 1e7;
@@ -223,11 +216,6 @@ void processSerialPacket(String line) {
 
   if (packet_type != 2) return;
 
-  // Serial.println("Received CMD from dashboard:");
-  // Serial.println("Handheld: " + String(handheld_id));
-  // Serial.println("Msg ID: " + String(msg_id));
-  // Serial.println("Response: " + String(response_code));
-
   sendRFResponse(handheld_id, msg_id, response_code);
 }
 
@@ -246,8 +234,9 @@ void sendRFResponse(int handheld_id, int msg_id, int response_code) {
 
   radio.startListening();
 
+  // to confirm autoack of if it fails the the response might be sent or not
   if (ok) {
-      beepBUZZER(BUZZ, 3, 200); // to confirm autoack of if it fails the the response might be sent or not
+      beepBUZZER(BUZZ, 1, 400); 
   }
 }
 
@@ -280,10 +269,12 @@ void setup() {
 
   initHardware();
 
-  beepBUZZER(BUZZ, 4, 200);
-
-  if (!radio.begin()) {
-  Serial.println("NRF24L01 Hardware not responding!");
+  beepBUZZER(BUZZ, 2, 200);
+ 
+  if (!radio.begin()) { 
+  // this can also be led indicator or a buzz from the buzzer
+  // or i can just put this inside the initHardware
+  Serial.println("NRF24L01 Hardware not responding!"); 
   while(1); // for testing
 }
   //loop through colors
