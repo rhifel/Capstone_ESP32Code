@@ -144,7 +144,7 @@ This repository primarily contains my contributions to the capstone project, inc
 
 ### Dashboard Repository
 
-[Link Text](https://github.com/Andoyyy-rakon/LIGTAS-DASHBOARD)   
+[LIGTAS-DASHBOARD](https://github.com/Andoyyy-rakon/LIGTAS-DASHBOARD)   
 
 ---
 
