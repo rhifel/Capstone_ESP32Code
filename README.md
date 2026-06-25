@@ -26,7 +26,7 @@ The project was developed to provide an alternative communication method during 
 * Validates and processes incoming packets
 * Sends acknowledgments and responses
 * Relays information to a local monitoring dashboard
-* Supports multiple handheld devices
+* Supports up to 6 handheld devices
 
 ### Monitoring Dashboard
 
@@ -165,6 +165,8 @@ To provide a accessible, community-level emergency communication system capable 
 
 ## Future Improvements
 
+* Implement Multiple Handhelds and Base Stations
+* Use LoRa for better range and support capabilities
 * RF mesh networking
 * Message encryption
 * Mobile application integration
